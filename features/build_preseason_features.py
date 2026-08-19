@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+import numpy as np
 
 sys.path.append(str(Path(__file__).parent.parent))
 from db.connection import get_connection, upsert_rows
@@ -48,6 +49,53 @@ def player_season_averages(season: int) -> pd.DataFrame:
         ppg=("fantasy_points", "mean"),
     ).reset_index()
     return agg
+
+
+def rookie_rows(season: int, existing_player_ids: set) -> pd.DataFrame:
+    """Rookies have no prior-season player_stats, so they're missing
+    entirely from the normal preseason_features build. This adds them
+    back in using the draft capital curve as their baseline instead of
+    career history."""
+    conn = get_connection()
+    rookies = pd.read_sql(
+        "SELECT player_id, player_name, position, team, overall_pick "
+        "FROM draft_capital WHERE draft_year = ? AND overall_pick IS NOT NULL",
+        conn, params=(season,),
+    )
+    curves = pd.read_sql("SELECT * FROM rookie_baseline_curve", conn)
+    team_stats = pd.read_sql(
+        "SELECT team, points_per_game FROM team_season_stats WHERE season = ?",
+        conn, params=(season - 1,),
+    )
+    sched_strength = pd.read_sql(
+        "SELECT team, position, avg_opp_def_rank FROM schedule_strength WHERE season = ?",
+        conn, params=(season,),
+    )
+    conn.close()
+
+    rookies = rookies[~rookies["player_id"].isin(existing_player_ids)]
+    if rookies.empty or curves.empty:
+        return pd.DataFrame()
+
+    rookies = rookies.merge(curves, on="position", how="inner")  # drop positions with no fitted curve
+    rookies["two_season_avg_ppg"] = rookies["intercept"] + rookies["slope"] * np.log(rookies["overall_pick"])
+    rookies["two_season_avg_ppg"] = rookies["two_season_avg_ppg"].clip(lower=0)  # no negative projections
+
+    rookies = rookies.merge(
+        team_stats.rename(columns={"points_per_game": "team_proj_ppg"}), on="team", how="left")
+    rookies = rookies.merge(
+        sched_strength.rename(columns={"avg_opp_def_rank": "schedule_strength_rank"}),
+        on=["team", "position"], how="left")
+
+    rookies["season"] = season
+    rookies["last_season_ppg"] = None       # no prior NFL season exists
+    rookies["games_played_last_season"] = 0
+    rookies["fantasy_points_per_game"] = None
+
+    cols = ["season", "player_id", "player_name", "position", "team",
+            "last_season_ppg", "two_season_avg_ppg", "games_played_last_season",
+            "team_proj_ppg", "schedule_strength_rank", "fantasy_points_per_game"]
+    return rookies[cols].round(2)
 
 
 def build(season: int) -> list[dict]:
@@ -114,6 +162,13 @@ def build(season: int) -> list[dict]:
             "last_season_ppg", "two_season_avg_ppg", "games_played_last_season",
             "team_proj_ppg", "schedule_strength_rank", "fantasy_points_per_game"]
     df = df[cols].round(2).where(pd.notnull(df), None)
+
+    rookies = rookie_rows(season, set(df["player_id"]))
+    if not rookies.empty:
+        print(f"Added {len(rookies)} rookies via draft capital baseline.")
+        rookies = rookies.where(pd.notnull(rookies), None)
+        df = pd.concat([df, rookies], ignore_index=True)
+
     return df.to_dict("records")
 
 

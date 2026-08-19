@@ -205,6 +205,50 @@ CREATE TABLE IF NOT EXISTS team_needs (
     PRIMARY KEY (season, week, fantasy_team_id, position)
 );
 
+-- Historical calibration: of players who carried a given injury report
+-- status, what fraction actually played that week? Computed once from
+-- real outcomes, reused every week rather than re-derived each time.
+CREATE TABLE IF NOT EXISTS injury_risk_rates (
+    report_status TEXT PRIMARY KEY,   -- e.g. 'Questionable', 'Doubtful', 'Out'
+    play_probability REAL,
+    sample_size INTEGER               -- how many historical cases this is based on
+);
+
+-- Weekly application: each player's play probability for the upcoming
+-- week, based on their current report status and injury_risk_rates.
+CREATE TABLE IF NOT EXISTS injury_risk (
+    season INTEGER NOT NULL,
+    week INTEGER NOT NULL,
+    player_id TEXT NOT NULL,
+    report_status TEXT,
+    play_probability REAL,
+    PRIMARY KEY (season, week, player_id)
+);
+
+-- Draft capital: which round/pick each player was drafted at. The
+-- single strongest predictor of rookie fantasy production available
+-- before they've played a snap.
+CREATE TABLE IF NOT EXISTS draft_capital (
+    draft_year INTEGER NOT NULL,
+    player_id TEXT NOT NULL,
+    player_name TEXT,
+    position TEXT,
+    team TEXT,
+    round INTEGER,
+    overall_pick INTEGER,
+    PRIMARY KEY (draft_year, player_id)
+);
+
+-- Fitted curve mapping draft capital to expected rookie-season points
+-- per game, by position. Refit periodically as more rookie classes
+-- of data become available.
+CREATE TABLE IF NOT EXISTS rookie_baseline_curve (
+    position TEXT PRIMARY KEY,
+    intercept REAL,
+    slope REAL,       -- fit on log(overall_pick): ppg = intercept + slope * ln(pick)
+    sample_size INTEGER
+);
+
 -- Projected points-per-game for each team for a season, before that
 -- season has been played (used for draft-time features).
 CREATE TABLE IF NOT EXISTS team_projections (

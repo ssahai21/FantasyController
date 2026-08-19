@@ -40,13 +40,23 @@ def load_projections(season: int, week: int) -> pd.DataFrame:
             "FROM preseason_projections WHERE season = ?",
             conn, params=(season,),
         )
+        conn.close()
+        df["play_probability"] = 1.0  # no in-season injury data exists at draft time
     else:
         df = pd.read_sql(
             "SELECT player_id, player_name, position, team, predicted_points AS value "
             "FROM projections WHERE season = ? AND week = ?",
             conn, params=(season, week),
         )
-    conn.close()
+        risk = pd.read_sql(
+            "SELECT player_id, play_probability FROM injury_risk WHERE season = ? AND week = ?",
+            conn, params=(season, week),
+        )
+        conn.close()
+        df = df.merge(risk, on="player_id", how="left")
+        df["play_probability"] = df["play_probability"].fillna(1.0)
+
+    df["value"] = df["value"] * df["play_probability"]
     return df
 
 

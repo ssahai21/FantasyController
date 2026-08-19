@@ -39,6 +39,10 @@ def load_roster_with_projections(season: int, week: int, fantasy_team_id: str) -
         "WHERE season = ? AND week = ?",
         conn, params=(season, week),
     )
+    injury_risk = pd.read_sql(
+        "SELECT player_id, play_probability FROM injury_risk WHERE season = ? AND week = ?",
+        conn, params=(season, week),
+    )
     conn.close()
 
     roster = roster.merge(id_map, left_on="player_id", right_on="espn_player_id", how="left")
@@ -46,7 +50,15 @@ def load_roster_with_projections(season: int, week: int, fantasy_team_id: str) -
         projections, left_on="nflverse_player_id", right_on="player_id",
         how="inner", suffixes=("", "_proj"),
     )
-    return roster[["player_name", "position", "predicted_points"]]
+    roster = roster.merge(
+        injury_risk, left_on="nflverse_player_id", right_on="player_id",
+        how="left", suffixes=("", "_risk"),
+    )
+    # No injury_risk row (e.g. build_injury_risk.py wasn't run) - assume healthy
+    roster["play_probability"] = roster["play_probability"].fillna(1.0)
+    roster["adjusted_points"] = roster["predicted_points"] * roster["play_probability"]
+
+    return roster[["player_name", "position", "predicted_points", "play_probability", "adjusted_points"]]
 
 
 def load_slots(season: int) -> dict:
@@ -93,9 +105,11 @@ def optimize(season: int, week: int, fantasy_team_id: str):
             if slot_eligibility(p["position"], slot):
                 x[(i, slot)] = pulp.LpVariable(f"x_{i}_{slot}", cat="Binary")
 
-    # Objective: maximize total projected points across everyone assigned to a slot
+    # Objective: maximize total INJURY-ADJUSTED points, not raw projections -
+    # this is what actually discourages starting a risky Questionable player
+    # over a lower-ceiling but healthy one
     prob += pulp.lpSum(
-        players[i]["predicted_points"] * x[(i, slot)] for (i, slot) in x
+        players[i]["adjusted_points"] * x[(i, slot)] for (i, slot) in x
     )
 
     # Each player starts in at most one slot
@@ -117,17 +131,21 @@ def optimize(season: int, week: int, fantasy_team_id: str):
             started_indices.add(i)
 
     bench = [p for i, p in enumerate(players) if i not in started_indices]
-    total_points = sum(p["predicted_points"] for slot_players in lineup.values() for p in slot_players)
+    total_points = sum(p["adjusted_points"] for slot_players in lineup.values() for p in slot_players)
+    total_raw = sum(p["predicted_points"] for slot_players in lineup.values() for p in slot_players)
 
-    print(f"\nOptimal lineup for week {week} - projected total: {total_points:.2f} points\n")
+    print(f"\nOptimal lineup for week {week} - projected total: {total_points:.2f} "
+          f"points (injury-adjusted; {total_raw:.2f} raw)\n")
     for slot, slot_players in lineup.items():
         for p in slot_players:
-            print(f"  {slot:<6} {p['player_name']:<25} {p['predicted_points']:>6.2f} pts")
+            risk_note = f" ({p['play_probability']:.0%} to play)" if p["play_probability"] < 1.0 else ""
+            print(f"  {slot:<6} {p['player_name']:<25} {p['predicted_points']:>6.2f} pts{risk_note}")
 
     if bench:
         print("\nBench:")
-        for p in sorted(bench, key=lambda p: p["predicted_points"], reverse=True):
-            print(f"  {'--':<6} {p['player_name']:<25} {p['predicted_points']:>6.2f} pts")
+        for p in sorted(bench, key=lambda p: p["adjusted_points"], reverse=True):
+            risk_note = f" ({p['play_probability']:.0%} to play)" if p["play_probability"] < 1.0 else ""
+            print(f"  {'--':<6} {p['player_name']:<25} {p['predicted_points']:>6.2f} pts{risk_note}")
 
 
 if __name__ == "__main__":
