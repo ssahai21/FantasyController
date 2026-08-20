@@ -1,6 +1,11 @@
 """
-Pulls league scoring settings and team rosters from a private ESPN
-fantasy football league, using the unofficial ESPN fantasy API.
+Pulls league scoring settings, roster slot requirements, and team
+rosters from a private ESPN fantasy football league, using the
+community-maintained espn_api package rather than hand-rolled requests
+against ESPN's undocumented API. ESPN's anti-bot protection (Akamai)
+blocks plain requests-library traffic even with valid cookies - espn_api
+is a widely used, actively maintained library that already handles this
+correctly, so it's a much better bet than re-implementing auth by hand.
 
 Requires espn_s2 and SWID cookies (see README for how to find them)
 plus your league ID, set in .env as:
@@ -16,8 +21,8 @@ import os
 import sys
 from pathlib import Path
 
-import requests
 from dotenv import load_dotenv
+from espn_api.football import League
 
 sys.path.append(str(Path(__file__).parent.parent))
 from db.connection import get_connection, upsert_rows
@@ -27,87 +32,80 @@ ESPN_S2 = os.getenv("ESPN_S2")
 ESPN_SWID = os.getenv("ESPN_SWID")
 LEAGUE_ID = os.getenv("ESPN_LEAGUE_ID")
 
-BASE_URL = "https://fantasy.espn.com/apis/v3/games/ffl/seasons/{season}/segments/0/leagues/{league_id}"
-
-# ESPN's scoring stat IDs mapped to the category names we use elsewhere
-# in the pipeline. This is not the full list - ESPN has ~90 stat IDs -
-# just the ones that map to standard fantasy scoring categories.
-ESPN_STAT_ID_MAP = {
-    "3": "passing_yards", "4": "pass_tds", "20": "interceptions",
-    "24": "rush_yards", "25": "rush_tds",
-    "42": "rec_yards", "43": "rec_tds", "53": "receptions",
-    "72": "fumbles_lost",
+# espn_api's roster_slots dict uses its own position labels, which
+# don't always match nflverse's position codes used elsewhere in the
+# pipeline (e.g. "RB/WR" for a shared flex-style slot, "D/ST" naming).
+# This maps the common ones - anything not in this map falls through
+# unchanged rather than being silently dropped.
+SLOT_NAME_MAP = {
+    "RB/WR": "FLEX", "RB/WR/TE": "FLEX", "WR/TE": "FLEX",
+    "D/ST": "D/ST", "DST": "D/ST",
 }
 
-LINEUP_SLOT_MAP = {
-    0: "QB", 2: "RB", 4: "WR", 6: "TE", 16: "D/ST",
-    17: "K", 20: "BENCH", 21: "IR", 23: "FLEX",
-}
+FANTASY_POSITIONS = {"QB", "RB", "WR", "TE", "K", "D/ST"}
 
 
-def _session():
+def get_league(season: int) -> League:
     if not (ESPN_S2 and ESPN_SWID and LEAGUE_ID):
         raise RuntimeError(
             "ESPN_S2, ESPN_SWID, and ESPN_LEAGUE_ID must all be set in .env"
         )
-    s = requests.Session()
-    s.cookies.update({"espn_s2": ESPN_S2, "SWID": ESPN_SWID})
-    return s
+    return League(league_id=int(LEAGUE_ID), year=season,
+                  espn_s2=ESPN_S2, swid=ESPN_SWID)
 
 
-def fetch_league_settings(season: int) -> list[dict]:
+def fetch_league_settings(league: League, season: int) -> list[dict]:
     print(f"Fetching league scoring settings for {season}...")
-    url = BASE_URL.format(season=season, league_id=LEAGUE_ID)
-    resp = _session().get(url, params={"view": "mSettings"})
-    resp.raise_for_status()
-    data = resp.json()
+    scoring = getattr(league.settings, "scoring_format", [])
 
-    scoring_items = (
-        data.get("settings", {})
-        .get("scoringSettings", {})
-        .get("scoringItems", [])
-    )
-
+    # scoring_format entries look like {'points': X, 'label': '...',
+    # 'abbr': '...'} - the label is the closest thing to a stable
+    # category name espn_api exposes, so we key off that rather than
+    # ESPN's internal numeric stat IDs.
     rows = []
-    for item in scoring_items:
-        stat_id = str(item.get("statId"))
-        category = ESPN_STAT_ID_MAP.get(stat_id)
-        if category is None:
-            continue  # skip stat IDs we haven't mapped (IDP, misc bonuses, etc.)
+    for item in scoring:
+        label = item.get("label") or item.get("abbr")
+        points = item.get("points")
+        if label is None or points is None:
+            continue
         rows.append({
             "season": season,
-            "stat_category": category,
-            "points_per_unit": item.get("points"),
+            "stat_category": label,
+            "points_per_unit": points,
         })
-
     return rows
 
 
-def fetch_rosters(season: int, week: int) -> list[dict]:
-    print(f"Fetching rosters for {season} week {week}...")
-    url = BASE_URL.format(season=season, league_id=LEAGUE_ID)
-    resp = _session().get(url, params={"view": "mRoster", "view": "mTeam"})
-    resp.raise_for_status()
-    data = resp.json()
+def fetch_roster_settings(league: League, season: int) -> list[dict]:
+    print(f"Fetching roster slot requirements for {season}...")
+    slots = getattr(league.settings, "roster_slots", {}) or {}
 
     rows = []
-    for team in data.get("teams", []):
-        team_id = str(team.get("id"))
-        team_name = f"{team.get('location', '')} {team.get('nickname', '')}".strip()
+    for slot_name, count in slots.items():
+        if not count or count <= 0:
+            continue
+        mapped_name = SLOT_NAME_MAP.get(slot_name, slot_name)
+        rows.append({"season": season, "lineup_slot": mapped_name, "slot_count": count})
+    return rows
 
-        for entry in team.get("roster", {}).get("entries", []):
-            player_info = entry.get("playerPoolEntry", {}).get("player", {})
+
+def fetch_rosters(league: League, season: int, week: int) -> list[dict]:
+    print(f"Fetching rosters for {season} week {week}...")
+    rows = []
+    for team in league.teams:
+        for player in team.roster:
+            position = getattr(player, "position", None)
+            slot = getattr(player, "lineupSlot", None)
             rows.append({
                 "season": season,
                 "week": week,
-                "fantasy_team_id": team_id,
-                "fantasy_team_name": team_name or team_id,
-                "player_id": str(player_info.get("id")),
-                "player_name": player_info.get("fullName"),
-                "position": player_info.get("defaultPositionId"),
-                "lineup_slot": LINEUP_SLOT_MAP.get(entry.get("lineupSlotId"), "UNKNOWN"),
+                "fantasy_team_id": str(team.team_id),
+                "fantasy_team_name": team.team_name,
+                "player_id": str(player.playerId),
+                "player_name": player.name,
+                "position": position,
+                "lineup_slot": SLOT_NAME_MAP.get(slot, slot) if slot else position,
             })
-
     return rows
 
 
@@ -117,7 +115,10 @@ if __name__ == "__main__":
     parser.add_argument("--week", type=int, required=True)
     args = parser.parse_args()
 
+    league = get_league(args.season)
+
     conn = get_connection()
-    upsert_rows(conn, "league_settings", fetch_league_settings(args.season))
-    upsert_rows(conn, "rosters", fetch_rosters(args.season, args.week))
+    upsert_rows(conn, "league_settings", fetch_league_settings(league, args.season))
+    upsert_rows(conn, "league_roster_settings", fetch_roster_settings(league, args.season))
+    upsert_rows(conn, "rosters", fetch_rosters(league, args.season, args.week))
     conn.close()

@@ -7,6 +7,7 @@ Usage:
 """
 import argparse
 import sys
+import urllib.error
 from pathlib import Path
 
 import nfl_data_py as nfl
@@ -17,7 +18,15 @@ from db.connection import get_connection, upsert_rows
 
 def fetch_week(season: int, week: int) -> list[dict]:
     print(f"Fetching injury reports for {season} week {week}...")
-    injuries = nfl.import_injuries([season])
+    try:
+        injuries = nfl.import_injuries([season])
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            print(f"No injury data file published yet for {season} - this is "
+                  f"normal before the season starts. Nothing to do.")
+            return []
+        raise
+
     injuries = injuries[injuries["week"] == week]
 
     if injuries.empty:
