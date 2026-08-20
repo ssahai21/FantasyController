@@ -7,13 +7,17 @@ write to the same database file and the schema only has to be applied once.
 import sqlite3
 from pathlib import Path
 
-DB_PATH = Path(__file__).parent.parent / "data" / "fantasycontroller.db"
+DB_PATH = Path(__file__).parent.parent / "data" / "fantasy.db"
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
 
 def get_connection() -> sqlite3.Connection:
     """Open a connection to the pipeline's SQLite database, creating
-    the database file and applying the schema on first use."""
+    the data directory, the database file, and applying the schema on
+    first use. The directory creation matters specifically for fresh
+    checkouts (e.g. GitHub Actions) - git doesn't track empty folders,
+    so data/ may not exist at all until this creates it."""
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     is_new = not DB_PATH.exists()
     conn = sqlite3.connect(DB_PATH)
 
@@ -41,4 +45,4 @@ def upsert_rows(conn: sqlite3.Connection, table: str, rows: list[dict]) -> None:
     values = [tuple(row[c] for c in columns) for row in rows]
     conn.executemany(sql, values)
     conn.commit()
-    print(f"Wrote {len(rows)} rows to {table}") 
+    print(f"Wrote {len(rows)} rows to {table}")
