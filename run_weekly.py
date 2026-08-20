@@ -104,19 +104,29 @@ def main():
         completed_week, upcoming_week = args.completed_week, args.upcoming_week
 
     S, CW, UW, TEAM = args.season, completed_week, upcoming_week, args.fantasy_team_id
+    preseason = (CW == 0)
+    if preseason:
+        print("\nNo completed weeks yet this season (preseason) - skipping stats "
+              "pull and backfill, since there's nothing to fetch. Weekly "
+              "projections won't be meaningful until a few weeks of real games "
+              "exist; use predict_preseason.py for draft-time projections instead.")
     run_start = time.time()
 
-    steps = [
-        ("Pull completed week's stats",
-         ["ingest/stats.py", "--season", str(S), "--week", str(CW)], True),
+    steps = []
+    if not preseason:
+        steps += [
+            ("Pull completed week's stats",
+             ["ingest/stats.py", "--season", str(S), "--week", str(CW)], True),
+            ("Backfill completed week's results as training labels",
+             ["features/backfill_labels.py", "--season", str(S), "--week", str(CW)], False),
+        ]
+    steps += [
         ("Pull upcoming week's injury reports",
          ["ingest/injuries.py", "--season", str(S), "--week", str(UW)], False),
         ("Pull upcoming week's odds",
          ["ingest/odds.py", "--season", str(S), "--week", str(UW)], False),
         ("Pull league settings and rosters",
          ["ingest/espn_league.py", "--season", str(S), "--week", str(UW)], True),
-        ("Backfill completed week's results as training labels",
-         ["features/backfill_labels.py", "--season", str(S), "--week", str(CW)], False),
         ("Refresh ESPN/nflverse player ID mapping",
          ["features/id_mapping.py", "--season", str(S)], False),
         ("Build features for the upcoming week",
