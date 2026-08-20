@@ -1,2 +1,13 @@
-/.env
-/venv
+# Never commit real secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# NOTE: data/fantasy.db is intentionally NOT ignored - the GitHub Actions
+# workflow commits it back to the repo after each run so state persists
+# between runs. If you're not using the automated workflow and would
+# rather keep your data out of git, add "data/fantasy.db" here instead.

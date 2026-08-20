@@ -1,0 +1,48 @@
+name: Weekly fantasy pipeline run
+
+on:
+  schedule:
+    # 10:00 UTC every Wednesday - after Tuesday night waivers process and
+    # before most people set next week's lineup. Adjust to your league's
+    # rhythm; cron is in UTC, not your local time.
+    - cron: '0 10 * * 3'
+  workflow_dispatch: {}   # lets you trigger a run manually from the Actions tab
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to commit the updated database back to the repo
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write .env from secrets
+        run: |
+          cat << EOF > .env
+          ODDS_API_KEY=${{ secrets.ODDS_API_KEY }}
+          ESPN_S2=${{ secrets.ESPN_S2 }}
+          ESPN_SWID=${{ secrets.ESPN_SWID }}
+          ESPN_LEAGUE_ID=${{ secrets.ESPN_LEAGUE_ID }}
+          EOF
+
+      - name: Run the weekly pipeline
+        run: >
+          python run_weekly.py
+          --season ${{ vars.SEASON }}
+          --fantasy-team-id ${{ vars.FANTASY_TEAM_ID }}
+
+      - name: Commit updated database
+        run: |
+          git config user.name "fantasy-pipeline-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/fantasy.db
+          git diff --staged --quiet || git commit -m "Weekly pipeline run: $(date -u +%Y-%m-%d)"
+          git push
