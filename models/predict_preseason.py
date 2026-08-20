@@ -41,7 +41,7 @@ def predict(season: int) -> list[dict]:
 
     model = xgb.XGBRegressor()
     model.load_model(MODEL_PATH)
-
+    df['team_proj_ppg'] = pd.to_numeric(df['team_proj_ppg'], errors='coerce')
     X = prepare_x(df)
     df["predicted_ppg"] = model.predict(X).round(2)
 

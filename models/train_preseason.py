@@ -58,6 +58,10 @@ def train():
     X_train, y_train = prepare_x(train_df), train_df[TARGET].astype(float)
     X_test, y_test = prepare_x(test_df), test_df[TARGET].astype(float)
 
+    X_train['team_proj_ppg'] = pd.to_numeric(X_train['team_proj_ppg'], errors='coerce')
+    X_test['team_proj_ppg'] = pd.to_numeric(X_test['team_proj_ppg'], errors='coerce')
+
+
     model = xgb.XGBRegressor(
         n_estimators=200,
         max_depth=3,          # shallower than the weekly model - far less
