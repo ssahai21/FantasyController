@@ -10,7 +10,7 @@ import argparse
 import sys
 from pathlib import Path
 
-import nfl_data_py as nfl
+import nflreadpy as nfl
 import pandas as pd
 
 sys.path.append(str(Path(__file__).parent.parent))
@@ -21,11 +21,11 @@ from ingest.stats import calculate_fantasy_points  # reuse, don't duplicate scor
 def fetch_seasons(seasons: list[int]) -> list[dict]:
     print(f"Fetching weekly stats for seasons {seasons} (this pulls full "
           f"seasons, may take a moment)...")
-    weekly = nfl.import_weekly_data(seasons)
+    weekly = nfl.load_player_stats(seasons).to_pandas()
     weekly = weekly[weekly["season_type"] == "REG"]  # regular season only
 
     try:
-        snaps = nfl.import_snap_counts(seasons)[["pfr_player_id", "season", "week", "offense_pct"]]
+        snaps = nfl.load_snap_counts(seasons).to_pandas()[["pfr_player_id", "season", "week", "offense_pct"]]
     except Exception:
         snaps = pd.DataFrame(columns=["pfr_player_id", "season", "week", "offense_pct"])
 

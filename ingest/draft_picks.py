@@ -12,7 +12,7 @@ import argparse
 import sys
 from pathlib import Path
 
-import nfl_data_py as nfl
+import nflreadpy as nfl
 import pandas as pd
 
 sys.path.append(str(Path(__file__).parent.parent))
@@ -23,7 +23,7 @@ FANTASY_POSITIONS = {"QB", "RB", "WR", "TE"}
 
 def fetch(draft_year: int) -> list[dict]:
     print(f"Fetching draft picks for {draft_year}...")
-    picks = nfl.import_draft_picks([draft_year])
+    picks = nfl.load_draft_picks([draft_year]).to_pandas()
     picks = picks[picks["position"].isin(FANTASY_POSITIONS)]
 
     if picks.empty:
@@ -45,7 +45,7 @@ def fetch(draft_year: int) -> list[dict]:
     # Some rookies don't get a gsis_id assigned until they're on an NFL
     # roster - these can't be joined to player_stats later and are
     # dropped rather than stored with a useless null ID
-    rows = [r for r in rows if r["player_id"]]
+    rows = [r for r in rows if pd.notna(r.get("player_id"))]
     return rows
 
 

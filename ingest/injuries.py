@@ -10,7 +10,7 @@ import sys
 import urllib.error
 from pathlib import Path
 
-import nfl_data_py as nfl
+import nflreadpy as nfl
 
 sys.path.append(str(Path(__file__).parent.parent))
 from db.connection import get_connection, upsert_rows
@@ -19,7 +19,7 @@ from db.connection import get_connection, upsert_rows
 def fetch_week(season: int, week: int) -> list[dict]:
     print(f"Fetching injury reports for {season} week {week}...")
     try:
-        injuries = nfl.import_injuries([season])
+        injuries = nfl.load_injuries([season]).to_pandas()
     except urllib.error.HTTPError as e:
         if e.code == 404:
             print(f"No injury data file published yet for {season} - this is "

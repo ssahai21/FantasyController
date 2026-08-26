@@ -9,7 +9,7 @@ import argparse
 import sys
 from pathlib import Path
 
-import nfl_data_py as nfl
+import nflreadpy as nfl
 import pandas as pd
 
 sys.path.append(str(Path(__file__).parent.parent))
@@ -47,16 +47,19 @@ def calculate_fantasy_points(row: pd.Series) -> float:
 
 def fetch_week(season: int, week: int) -> list[dict]:
     print(f"Fetching weekly stats for {season} week {week}...")
-    weekly = nfl.import_weekly_data([season])
+    weekly = nfl.load_player_stats([season]).to_pandas()
     weekly = weekly[weekly["week"] == week]
 
     if weekly.empty:
         print(f"No data returned for {season} week {week} yet.")
         return []
 
+    FANTASY_POSITIONS = {"QB", "RB", "WR", "TE"}
+    weekly = weekly[weekly["position"].isin(FANTASY_POSITIONS)]
+
     # Snap counts and red zone touches come from a separate table
     try:
-        snaps = nfl.import_snap_counts([season])
+        snaps = nfl.load_snap_counts([season]).to_pandas()
         snaps = snaps[snaps["week"] == week][["pfr_player_id", "offense_pct"]]
     except Exception:
         snaps = pd.DataFrame(columns=["pfr_player_id", "offense_pct"])
@@ -92,7 +95,7 @@ def fetch_week(season: int, week: int) -> list[dict]:
             "air_yards": int(r.get("receiving_air_yards", 0) or 0),
             "fantasy_points": calculate_fantasy_points(r),
         })
-
+    rows = [r for r in rows if pd.notna(r.get("player_id"))]
     return rows
 
 

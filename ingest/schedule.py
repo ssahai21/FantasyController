@@ -10,7 +10,8 @@ import argparse
 import sys
 from pathlib import Path
 
-import nfl_data_py as nfl
+import nflreadpy as nfl
+import pandas as pd
 
 sys.path.append(str(Path(__file__).parent.parent))
 from db.connection import get_connection, upsert_rows
@@ -18,7 +19,7 @@ from db.connection import get_connection, upsert_rows
 
 def fetch_schedule(season: int) -> list[dict]:
     print(f"Fetching schedule for {season}...")
-    sched = nfl.import_schedules([season])
+    sched = nfl.load_schedules([season]).to_pandas()
 
     rows = []
     for _, r in sched.iterrows():
@@ -28,6 +29,8 @@ def fetch_schedule(season: int) -> list[dict]:
             "home_team": r["home_team"],
             "away_team": r["away_team"],
             "game_date": str(r.get("gameday")),
+            "home_score": None if pd.isna(r.get("home_score")) else int(r["home_score"]),
+            "away_score": None if pd.isna(r.get("away_score")) else int(r["away_score"]),
         })
 
     return rows

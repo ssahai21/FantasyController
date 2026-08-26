@@ -76,6 +76,13 @@ def fetch_league_settings(league: League, season: int) -> list[dict]:
     return rows
 
 
+def fetch_league_info(league: League, season: int) -> list[dict]:
+    team_count = getattr(league.settings, "team_count", None)
+    if team_count is None:
+        return []
+    return [{"season": season, "num_teams": team_count}]
+
+
 def fetch_roster_settings(league: League, season: int) -> list[dict]:
     print(f"Fetching roster slot requirements for {season}...")
     slots = getattr(league.settings, "roster_slots", {}) or {}
@@ -113,12 +120,24 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--season", type=int, required=True)
     parser.add_argument("--week", type=int, required=True)
+    parser.add_argument("--slots", type=str, required=False)
     args = parser.parse_args()
 
     league = get_league(args.season)
 
+    slots = []
+
+    parts = args.slots.split(" ")
+
+    for part in parts:
+        split = part.split(":")
+        pos = split[0]
+        num = split[1]
+        slots.append({"season":args.season, "lineup_slot":pos, "slot_count":num})
+
     conn = get_connection()
     upsert_rows(conn, "league_settings", fetch_league_settings(league, args.season))
-    upsert_rows(conn, "league_roster_settings", fetch_roster_settings(league, args.season))
+    upsert_rows(conn, "league_roster_settings", slots)
+    upsert_rows(conn, "league_info", fetch_league_info(league, args.season))
     upsert_rows(conn, "rosters", fetch_rosters(league, args.season, args.week))
     conn.close()

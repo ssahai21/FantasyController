@@ -15,7 +15,7 @@ import argparse
 import sys
 from pathlib import Path
 
-import nfl_data_py as nfl
+import nflreadpy as nfl
 import pandas as pd
 
 sys.path.append(str(Path(__file__).parent.parent))

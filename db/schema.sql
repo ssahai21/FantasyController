@@ -162,6 +162,8 @@ CREATE TABLE IF NOT EXISTS preseason_features (
     player_name TEXT,
     position TEXT,
     team TEXT,
+    age REAL,                       -- age as of the season - real predictive signal for aging curves
+    is_rookie INTEGER,               -- 1 if this is the player's rookie season, 0 otherwise
     last_season_ppg REAL,           -- avg fantasy points/game, most recent season
     two_season_avg_ppg REAL,        -- weighted avg across up to 2 prior seasons
     games_played_last_season INTEGER,
@@ -179,7 +181,18 @@ CREATE TABLE IF NOT EXISTS preseason_projections (
     position TEXT,
     team TEXT,
     predicted_ppg REAL,
+    vor REAL,   -- value over replacement: predicted_ppg minus a replacement-level
+                -- baseline for that position, given your league's roster size and
+                -- starter requirements. THIS, not predicted_ppg, is what draft order
+                -- should actually be sorted by - see models/predict_preseason.py
     PRIMARY KEY (season, player_id)
+);
+
+-- How many teams are in your league - needed to know how many players
+-- at each position are actually "startable" league-wide for VOR.
+CREATE TABLE IF NOT EXISTS league_info (
+    season INTEGER PRIMARY KEY,
+    num_teams INTEGER
 );
 
 -- How many starting slots your league requires per position - needed
